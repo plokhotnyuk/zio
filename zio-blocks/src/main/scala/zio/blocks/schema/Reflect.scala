@@ -5,8 +5,6 @@ import zio.blocks.schema.binding._
 import RegisterOffset.RegisterOffset
 
 sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
-  protected def inner: Any
-
   type NodeBinding <: BindingType
 
   def refineBinding[G[_, _]](f: RefineBinding[F, G]): Reflect[G, A]
@@ -16,25 +14,16 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
   def binding(implicit F: HasBinding[F]): Binding[NodeBinding, A]
 
   def asTerm[S](name: String): Term[F, S, A] = Term(name, this, Doc.Empty, scala.List.empty)
-
-  override def hashCode: Int = inner.hashCode
-
-  override def equals(obj: Any): Boolean = obj match {
-    case that: Reflect[_, _] => inner == that.inner
-    case _                   => false
-  }
 }
 object Reflect {
   type Bound[A] = Reflect[Binding, A]
 
-  final case class Record[F[_, _], A](
+  final case class Record[F[_, _], A] private (
     fields: scala.List[Term[F, A, ?]],
     typeName: TypeName[A],
-    recordBinding: F[BindingType.Record, A],
     doc: Doc,
     modifiers: scala.List[Modifier.Record]
-  ) extends Reflect[F, A] { self =>
-    protected def inner: Any = (fields, typeName, doc, modifiers)
+  )(val recordBinding: F[BindingType.Record, A]) extends Reflect[F, A] { self =>
     final type NodeBinding = BindingType.Record
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Record, A] = F.binding(recordBinding)
@@ -124,19 +113,40 @@ object Reflect {
     val size: RegisterOffset = registers.foldLeft(RegisterOffset.Zero) { case (acc, register) =>
       RegisterOffset.add(acc, register.size)
     }
+
+    def copy(
+      fields: scala.List[Term[F, A, ?]] = this.fields,
+      typeName: TypeName[A] = this.typeName,
+      recordBinding: F[BindingType.Record, A] = this.recordBinding,
+      doc: Doc = this.doc,
+      modifiers: scala.List[Modifier.Record] = this.modifiers
+    ): Record[F, A] = new Record(fields, typeName, doc, modifiers)(recordBinding)
   }
+
   object Record {
     type Bound[A] = Record[Binding, A]
+
+    def apply[F[_, _], A](
+      fields: scala.List[Term[F, A, ?]],
+      typeName: TypeName[A],
+      recordBinding: F[BindingType.Record, A],
+      doc: Doc,
+      modifiers: scala.List[Modifier.Record]
+    ): Record[F, A] = new Record(fields, typeName, doc, modifiers)(recordBinding)
+
+    def unapply[F[_, _], A](
+      x: Record[F, A]
+    ): Option[(scala.List[Term[F, A, ?]], TypeName[A], F[BindingType.Record, A], Doc, scala.List[Modifier.Record])] =
+      if (x ne null) Some((x.fields.asInstanceOf, x.typeName, x.recordBinding, x.doc, x.modifiers))
+      else None
   }
-  final case class Variant[F[_, _], A](
+
+  final case class Variant[F[_, _], A] private (
     cases: scala.List[Term[F, A, ? <: A]],
     typeName: TypeName[A],
-    variantBinding: F[BindingType.Variant, A],
     doc: Doc,
     modifiers: scala.List[Modifier.Variant]
-  ) extends Reflect[F, A] {
-    protected def inner: Any = (cases, typeName, doc, modifiers)
-
+  )(val variantBinding: F[BindingType.Variant, A]) extends Reflect[F, A] {
     final type NodeBinding = BindingType.Variant
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Variant, A] = F.binding(variantBinding)
@@ -153,45 +163,86 @@ object Reflect {
 
     def refineBinding[G[_, _]](f: RefineBinding[F, G]): Variant[G, A] =
       Variant(cases.map(_.refineBinding(f)), typeName, f(variantBinding), doc, modifiers)
+
+    def copy(
+      cases: scala.List[Term[F, A, ? <: A]] = this.cases,
+      typeName: TypeName[A] = this.typeName,
+      variantBinding: F[BindingType.Variant, A] = this.variantBinding,
+      doc: Doc = this.doc,
+      modifiers: scala.List[Modifier.Variant] = this.modifiers
+    ): Variant[F, A] = new Variant(cases, typeName, doc, modifiers)(variantBinding)
   }
   object Variant {
     type Bound[A] = Variant[Binding, A]
+
+    def apply[F[_, _], A](
+      cases: scala.List[Term[F, A, ? <: A]],
+      typeName: TypeName[A],
+      variantBinding: F[BindingType.Variant, A],
+      doc: Doc,
+      modifiers: scala.List[Modifier.Variant]
+    ): Variant[F, A] = new Variant(cases, typeName, doc, modifiers)(variantBinding)
+
+    def unapply[F[_, _], A](x: Variant[F, A]): Option[
+      (scala.List[Term[F, A, ? <: A]], TypeName[A], F[BindingType.Variant, A], Doc, scala.List[Modifier.Variant])
+    ] =
+      if (x ne null) Some((x.cases, x.typeName, x.variantBinding, x.doc, x.modifiers))
+      else None
   }
-  final case class Sequence[F[_, _], A, C[_]](
+
+  final case class Sequence[F[_, _], A, C[_]] private (
     element: Reflect[F, A],
-    seqBinding: F[BindingType.Seq[C], C[A]],
     typeName: TypeName[C[A]],
     doc: Doc,
     modifiers: List[Modifier.Seq]
-  ) extends Reflect[F, C[A]] {
-    protected def inner: Any = (element, typeName, doc, modifiers)
-
+  )(val seqBinding: F[BindingType.Seq[C], C[A]]) extends Reflect[F, C[A]] {
     final type NodeBinding = BindingType.Seq[C]
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Seq[C], C[A]] = F.binding(seqBinding)
 
     def refineBinding[G[_, _]](f: RefineBinding[F, G]): Sequence[G, A, C] =
-      Sequence(element.refineBinding(f), f(seqBinding), typeName, doc, modifiers)
+      new Sequence(element.refineBinding(f), typeName, doc, modifiers)(f(seqBinding))
 
     def seqConstructor(implicit F: HasBinding[F]): SeqConstructor[C] = F.seqConstructor(seqBinding)
 
     def seqDeconstructor(implicit F: HasBinding[F]): SeqDeconstructor[C] = F.seqDeconstructor(seqBinding)
 
     def traversal: Traversal[F, C[A], A] = Traversal(this)
+
+    def copy(
+      element: Reflect[F, A] = this.element,
+      seqBinding: F[BindingType.Seq[C], C[A]] = this.seqBinding,
+      typeName: TypeName[C[A]] = this.typeName,
+      doc: Doc = this.doc,
+      modifiers: List[Modifier.Seq] = this.modifiers
+    ): Sequence[F, A, C] = new Sequence(element, typeName, doc, modifiers)(seqBinding)
   }
+
   object Sequence {
     type Bound[A, C[_]] = Sequence[Binding, A, C]
+
+    def apply[F[_, _], A, C[_]](
+      element: Reflect[F, A],
+      seqBinding: F[BindingType.Seq[C], C[A]],
+      typeName: TypeName[C[A]],
+      doc: Doc,
+      modifiers: List[Modifier.Seq]
+    ): Sequence[F, A, C] = new Sequence(element, typeName, doc, modifiers)(seqBinding)
+
+    def unapply[F[_, _], A, C[_]](
+      x: Sequence[F, A, C]
+    ): Option[(Reflect[F, A], F[BindingType.Seq[C], C[A]], TypeName[C[A]], Doc, List[Modifier.Seq])] =
+      if (x ne null) Some((x.element, x.seqBinding, x.typeName, x.doc, x.modifiers))
+      else None
   }
-  final case class Map[F[_, _], Key, Value, M[_, _]](
+
+  final case class Map[F[_, _], Key, Value, M[_, _]] private (
     key: Reflect[F, Key],
     value: Reflect[F, Value],
-    mapBinding: F[BindingType.Map[M], M[Key, Value]],
     typeName: TypeName[M[Key, Value]],
     doc: Doc,
     modifiers: List[Modifier.Map]
-  ) extends Reflect[F, M[Key, Value]] {
-    protected def inner: Any = (key, value, typeName, doc, modifiers)
-
+  )(val mapBinding: F[BindingType.Map[M], M[Key, Value]]) extends Reflect[F, M[Key, Value]] {
     final type NodeBinding = BindingType.Map[M]
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Map[M], M[Key, Value]] = F.binding(mapBinding)
@@ -201,38 +252,86 @@ object Reflect {
     def mapDeconstructor(implicit F: HasBinding[F]): MapDeconstructor[M] = F.mapDeconstructor(mapBinding)
 
     def refineBinding[G[_, _]](f: RefineBinding[F, G]): Map[G, Key, Value, M] =
-      Map(key.refineBinding(f), value.refineBinding(f), f(mapBinding), typeName, doc, modifiers)
+      new Map(key.refineBinding(f), value.refineBinding(f), typeName, doc, modifiers)(f(mapBinding))
 
     def keys: Traversal[F, M[Key, Value], Key] = Traversal.MapKeys(this)
 
     def values: Traversal[F, M[Key, Value], Value] = Traversal.MapValues(this)
+
+    def copy(
+      key: Reflect[F, Key] = this.key,
+      value: Reflect[F, Value] = this.value,
+      mapBinding: F[BindingType.Map[M], M[Key, Value]] = this.mapBinding,
+      typeName: TypeName[M[Key, Value]] = this.typeName,
+      doc: Doc = this.doc,
+      modifiers: List[Modifier.Map] = this.modifiers
+    ): Map[F, Key, Value, M] = new Map(key, value, typeName, doc, modifiers)(mapBinding)
   }
+
   object Map {
     type Bound[K, V, M[_, _]] = Map[Binding, K, V, M]
-  }
-  final case class Dynamic[F[_, _]](
-    dynamicBinding: F[BindingType.Dynamic, DynamicValue],
-    modifiers: scala.List[Modifier.Dynamic],
-    doc: Doc
-  ) extends Reflect[F, DynamicValue] {
-    protected def inner: Any = (modifiers, doc, modifiers)
 
+    def apply[F[_, _], Key, Value, M[_, _]](
+      key: Reflect[F, Key],
+      value: Reflect[F, Value],
+      mapBinding: F[BindingType.Map[M], M[Key, Value]],
+      typeName: TypeName[M[Key, Value]],
+      doc: Doc,
+      modifiers: List[Modifier.Map]
+    ): Map[F, Key, Value, M] = new Map(key, value, typeName, doc, modifiers)(mapBinding)
+
+    def unapply[F[_, _], Key, Value, M[_, _]](x: Map[F, Key, Value, M]): Option[
+      (
+        Reflect[F, Key],
+        Reflect[F, Value],
+        F[BindingType.Map[M], M[Key, Value]],
+        TypeName[M[Key, Value]],
+        Doc,
+        List[Modifier.Map]
+      )
+    ] =
+      if (x ne null) Some((x.key, x.value, x.mapBinding, x.typeName, x.doc, x.modifiers))
+      else None
+  }
+
+  final case class Dynamic[F[_, _]] private (
+    doc: Doc,
+    modifiers: scala.List[Modifier.Dynamic]
+  )(val dynamicBinding: F[BindingType.Dynamic, DynamicValue]) extends Reflect[F, DynamicValue] {
     final type NodeBinding = BindingType.Dynamic
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Dynamic, DynamicValue] = F.binding(dynamicBinding)
 
     def refineBinding[G[_, _]](f: RefineBinding[F, G]): Reflect[G, DynamicValue] =
-      Dynamic(f(dynamicBinding), modifiers, doc)
+      new Dynamic(doc, modifiers)(f(dynamicBinding))
+
+    def copy(
+      dynamicBinding: F[BindingType.Dynamic, DynamicValue] = this.dynamicBinding,
+      modifiers: scala.List[Modifier.Dynamic] = this.modifiers,
+      doc: Doc = this.doc
+    ): Dynamic[F] = new Dynamic(doc, modifiers)(dynamicBinding)
   }
-  final case class Primitive[F[_, _], A](
+
+  object Dynamic {
+    def apply[F[_, _]](
+      dynamicBinding: F[BindingType.Dynamic, DynamicValue],
+      modifiers: scala.List[Modifier.Dynamic],
+      doc: Doc
+    ): Dynamic[F] = new Dynamic(doc, modifiers)(dynamicBinding)
+
+    def unapply[F[_, _]](
+      x: Dynamic[F]
+    ): Option[(F[BindingType.Dynamic, DynamicValue], scala.List[Modifier.Dynamic], Doc)] =
+      if (x ne null) Some((x.dynamicBinding, x.modifiers, x.doc))
+      else None
+  }
+
+  final case class Primitive[F[_, _], A] private (
     primitiveType: PrimitiveType[A],
-    primitiveBinding: F[BindingType.Primitive, A],
     typeName: TypeName[A],
     doc: Doc,
     modifiers: scala.List[Modifier.Primitive]
-  ) extends Reflect[F, A] { self =>
-    protected def inner: Any = (primitiveType, typeName, doc, modifiers)
-
+  )(val primitiveBinding: F[BindingType.Primitive, A]) extends Reflect[F, A] { self =>
     final type NodeBinding = BindingType.Primitive
 
     def binding(implicit F: HasBinding[F]): Binding.Primitive[A] = F.primitive(primitiveBinding)
@@ -241,11 +340,35 @@ object Reflect {
 
     def examples(implicit F: HasBinding[F]): scala.List[A] = binding.examples
 
-    def refineBinding[G[_, _]](f: RefineBinding[F, G]): Primitive[G, A] = copy(primitiveBinding = f(primitiveBinding))
-  }
-  final case class Deferred[F[_, _], A](_value: () => Reflect[F, A]) extends Reflect[F, A] {
-    protected def inner: Any = value.inner
+    def refineBinding[G[_, _]](f: RefineBinding[F, G]): Primitive[G, A] =
+      new Primitive(primitiveType, typeName, doc, modifiers)(f(primitiveBinding))
 
+    def copy(
+      primitiveType: PrimitiveType[A] = this.primitiveType,
+      primitiveBinding: F[BindingType.Primitive, A] = this.primitiveBinding,
+      typeName: TypeName[A] = this.typeName,
+      doc: Doc = this.doc,
+      modifiers: scala.List[Modifier.Primitive] = this.modifiers
+    ): Primitive[F, A] = new Primitive(primitiveType, typeName, doc, modifiers)(primitiveBinding)
+  }
+
+  object Primitive {
+    def apply[F[_, _], A](
+      primitiveType: PrimitiveType[A],
+      primitiveBinding: F[BindingType.Primitive, A],
+      typeName: TypeName[A],
+      doc: Doc,
+      modifiers: scala.List[Modifier.Primitive]
+    ): Primitive[F, A] = new Primitive(primitiveType, typeName, doc, modifiers)(primitiveBinding)
+
+    def unapply[F[_, _], A](
+      x: Primitive[F, A]
+    ): Option[(PrimitiveType[A], F[BindingType.Primitive, A], TypeName[A], Doc, scala.List[Modifier.Primitive])] =
+      if (x ne null) Some((x.primitiveType, x.primitiveBinding, x.typeName, x.doc, x.modifiers))
+      else None
+  }
+
+  final case class Deferred[F[_, _], A] private (_value: () => Reflect[F, A]) extends Reflect[F, A] {
     lazy val value = _value()
 
     final type NodeBinding = value.NodeBinding
@@ -257,6 +380,20 @@ object Reflect {
     def doc: Doc = value.doc
 
     def refineBinding[G[_, _]](f: RefineBinding[F, G]): Reflect[G, A] = value.refineBinding(f)
+
+    def copy(value: () => Reflect[F, A] = this._value): Deferred[F, A] = new Deferred(() => value())
+
+    override def hashCode: Int = value.hashCode
+
+    override def equals(obj: Any): Boolean = value.equals(obj)
+  }
+
+  object Deferred {
+    def apply[F[_, _], A](value: () => Reflect[F, A]): Deferred[F, A] = new Deferred(() => value())
+
+    def unapply[F[_, _], A](x: Deferred[F, A]): Option[(() => Reflect[F, A])] =
+      if (x ne null) Some((() => x.value))
+      else None
   }
 
   def unit[F[_, _]](implicit F: FromBinding[F]): Reflect[F, Unit] =
@@ -696,12 +833,13 @@ object Reflect {
     object Option {
       def unapply[F[_, _], A](reflect: Reflect[F, scala.Option[A]]): scala.Option[Reflect[F, A]] =
         reflect match {
-          case Variant(noneTerm :: someTerm :: Nil, tn, _, _, _) if tn == TypeName.option =>
+          case Variant(cases, tn, _, _, _) if cases.size == 2 && tn == TypeName.option =>
+            // FIXME: workaround for Scala 2.13 compilation error
+            val someTerm = cases.asInstanceOf[List[Term[F, scala.Option[A], _ <: scala.Option[A]]]].tail.head
             someTerm match {
               case Term("Some", element, _, _) => Some(element.asInstanceOf[Reflect[F, A]])
               case _                           => None
             }
-
           case _ => None
         }
     }
@@ -710,15 +848,24 @@ object Reflect {
         reflect: Reflect[F, scala.Either[L, R]]
       ): scala.Option[(Reflect[F, L], Reflect[F, R])] =
         reflect match {
-          case Variant(leftTerm :: rightTerm :: Nil, tn, _, _, _) if tn == TypeName.either =>
+          case Variant(cases, tn, _, _, _) if cases.size == 2 && tn == TypeName.either =>
+            // FIXME: workaround for Scala 2.13 compilation error
+            val leftTerm  = cases.asInstanceOf[List[Term[F, scala.Either[L, R], _ <: scala.Either[L, R]]]].head
+            val rightTerm = cases.asInstanceOf[List[Term[F, scala.Either[L, R], _ <: scala.Either[L, R]]]].tail.head
             (leftTerm, rightTerm) match {
               case (Term("Left", left, _, _), Term("Right", right, _, _)) =>
                 Some((left.asInstanceOf[Reflect[F, L]], right.asInstanceOf[Reflect[F, R]]))
               case _ => None
             }
-
           case _ => None
         }
     }
   }
 }
+/*
+[error] /home/andriy/Projects/com/github/plokhotnyuk/zio/zio-blocks/src/test/scala/zio/blocks/schema/SchemaSpec.scala:220:32: overloaded method apply with alternatives:
+[error]   (cases: List[zio.blocks.schema.Term[zio.blocks.schema.binding.Binding, zio.blocks.schema.SchemaSpec.Variant, _ <: zio.blocks.schema.SchemaSpec.Variant]],typeName: zio.blocks.schema.TypeName[zio.blocks.schema.SchemaSpec.Variant],doc: zio.blocks.schema.Doc,modifiers: List[zio.blocks.schema.Modifier.Variant])(variantBinding: zio.blocks.schema.binding.Binding[zio.blocks.schema.binding.BindingType.Variant,zio.blocks.schema.SchemaSpec.Variant]): zio.blocks.schema.Reflect.Variant[zio.blocks.schema.binding.Binding,zio.blocks.schema.SchemaSpec.Variant] <and>
+[error]   (cases: List[zio.blocks.schema.Term[zio.blocks.schema.binding.Binding, zio.blocks.schema.SchemaSpec.Variant, _ <: zio.blocks.schema.SchemaSpec.Variant]],typeName: zio.blocks.schema.TypeName[zio.blocks.schema.SchemaSpec.Variant],variantBinding: zio.blocks.schema.binding.Binding[zio.blocks.schema.binding.BindingType.Variant,zio.blocks.schema.SchemaSpec.Variant],doc: zio.blocks.schema.Doc,modifiers: List[zio.blocks.schema.Modifier.Variant])zio.blocks.schema.Reflect.Variant[zio.blocks.schema.binding.Binding,zio.blocks.schema.SchemaSpec.Variant]
+[error]  cannot be applied to (cases: List[zio.blocks.schema.Term[[T, A]zio.blocks.schema.binding.Binding[T,A], zio.blocks.schema.SchemaSpec.Variant, _ >: zio.blocks.schema.SchemaSpec.Case2 with zio.blocks.schema.SchemaSpec.Case1 <: Product with zio.blocks.schema.SchemaSpec.Variant with java.io.Serializable]], typeName: zio.blocks.schema.TypeName[zio.blocks.schema.SchemaSpec.Variant], variantBinding: zio.blocks.schema.binding.Binding.Variant[Product with zio.blocks.schema.SchemaSpec.Variant with java.io.Serializable], doc: zio.blocks.schema.Doc.Empty.type, modifiers: collection.immutable.Nil.type)
+[error]
+ */
