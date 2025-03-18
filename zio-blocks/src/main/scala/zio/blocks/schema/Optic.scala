@@ -109,9 +109,70 @@ sealed trait Lens[F[_, _], S, A] extends Optic[F, S, A] {
 object Lens {
   type Bound[S, A] = Lens[Binding, S, A]
 
-  def apply[F[_, _], S, A](parent: Reflect.Record[F, S], child: Term[F, S, A]): Lens[F, S, A] = new Field(parent, child)
+  def apply[F[_, _], S, A](parent: Reflect.Record[F, S], child: Term[F, S, A]): Lens[F, S, A] =
+    new UnsafeOptic(ArraySeq(parent), ArraySeq(child))
 
-  def apply[F[_, _], S, T, A](first: Lens[F, S, T], second: Lens[F, T, A]): Lens[F, S, A] = new LensLens(first, second)
+  def apply[F[_, _], S, T, A](first: Lens[F, S, T], second: Lens[F, T, A]): Lens[F, S, A] = {
+    val u1 = first.asInstanceOf[UnsafeOptic[F, S, A]]
+    val u2 = second.asInstanceOf[UnsafeOptic[F, S, A]]
+    new UnsafeOptic(u1.parents ++ u2.parents, u1.childs ++ u2.childs)
+  }
+
+  private case class UnsafeOptic[F[_, _], S, A](
+    parents: ArraySeq[Reflect.Record[F, S]],
+    childs: ArraySeq[Term[F, S, A]]
+  ) extends Lens[F, S, A]
+      with Leaf[F, S, A] {
+    private[this] val regs: Array[Register[_]] = {
+      val len = parents.length
+      val rs  = new Array[Register[_]](len)
+      var i   = 0
+      while (i < len) {
+        rs(i) = parents(i).registers(parents(i).fields.indexWhere(_.name == childs(i).name))
+        i += 1
+      }
+      rs
+    }
+    private[this] val offs = regs.map {
+      var offset = RegisterOffset.Zero
+      r =>
+        val prevOffset = offset
+        offset = RegisterOffset.add(offset, r.usedRegisters)
+        prevOffset
+    }
+
+    override def get(s: S)(implicit F: HasBinding[F]): A = {
+      val registers = Lens.registers.get // Registers()
+      var x: Any    = s
+      val len       = parents.length
+      var i         = 0
+      while (i < len) {
+        val offset = offs(i)
+        F.deconstructor(parents(i).recordBinding).deconstruct(registers, offset, x.asInstanceOf[S])
+        x = regs(i).get(registers, offset)
+        i += 1
+      }
+      x.asInstanceOf[A]
+    }
+
+    override def set(s: S, a: A)(implicit F: HasBinding[F]): S = ???
+
+    override def refineBinding[G[_, _]](f: RefineBinding[F, G]): Lens[G, S, A] = ???
+    // new UnsafeOptic(parents.map(_.refineBinding(f)), childs.map(_.refineBinding(f)))
+
+    override def structure: Reflect[F, S] = parents(0)
+
+    override def focus: Reflect[F, A] = childs(childs.length - 1).value
+
+    override def hashCode: Int = parents.hashCode ^ childs.hashCode
+
+    override def equals(obj: Any): Boolean = obj match {
+      case other: UnsafeOptic[F, _, _] => other.parents.equals(parents) && other.childs.equals(childs)
+      case _                           => false
+    }
+
+    override private[schema] def linearized: ArraySeq[Leaf[F, S, A]] = ???
+  }
 
   private case class Field[F[_, _], S, A](parent: Reflect.Record[F, S], child: Term[F, S, A])
       extends Lens[F, S, A]
@@ -167,6 +228,8 @@ object Lens {
 
     private[schema] lazy val linearized: ArraySeq[Leaf[F, _, _]] = first.linearized ++ second.linearized
   }
+
+  private val registers = ThreadLocal.withInitial(() => Registers())
 }
 
 sealed trait Prism[F[_, _], S, A] extends Optic[F, S, A] {
