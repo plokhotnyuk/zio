@@ -16,33 +16,30 @@ class LensGetBenchmark {
 
   var a: A = A(B(C(D(E("test")))))
 
-  var aWithNull: A = A(B(null))
+  var aWithCNull: A = A(B(null))
 
   @Benchmark
-  def unsafePresent: String = a.b.c.d.e.s
+  def directPresent: String = a.b.c.d.e.s
 
   @Benchmark
   def zioBlocksPresent: String = A.b_c_d_e_s.get(a)
 
   @Benchmark
-  def zioBlocksAbsent: String = A.b_c_d_e_s.get(aWithNull)
-
-  @Benchmark
   def optionPresent: Option[String] = for {
-    aOpt <- Option(a)
-    b    <- Option(aOpt.b)
-    c    <- Option(b.c)
-    d    <- Option(c.d)
-    e    <- Option(d.e)
+    a <- Option(this.a)
+    b <- Option(a.b)
+    c <- Option(b.c)
+    d <- Option(c.d)
+    e <- Option(d.e)
   } yield e.s
 
   @Benchmark
   def optionAbsent: Option[String] = for {
-    aOpt <- Option(aWithNull)
-    b    <- Option(aOpt.b)
-    c    <- Option(b.c)
-    d    <- Option(c.d)
-    e    <- Option(d.e)
+    a <- Option(aWithCNull)
+    b <- Option(a.b)
+    c <- Option(b.c)
+    d <- Option(c.d)
+    e <- Option(d.e)
   } yield e.s
 }
 
@@ -57,16 +54,16 @@ class LensSetBenchmark {
 
   var a: A = A(B(C(D(E("test")))))
 
-  var aWithNull: A = A(B(null))
+  var aWithCNull: A = A(B(null))
 
   @Benchmark
-  def unsafePresent: A = a.copy(b = a.b.copy(c = a.b.c.copy(d = a.b.c.d.copy(e = a.b.c.d.e.copy(s = "test2")))))
+  def directPresent: A = a.copy(b = a.b.copy(c = a.b.c.copy(d = a.b.c.d.copy(e = a.b.c.d.e.copy(s = "test2")))))
 
   @Benchmark
   def zioBlocksPresent: A = A.b_c_d_e_s.set(a, "test2")
 
   @Benchmark
-  def zioBlocksAbsent: A = A.b_c_d_e_s.set(aWithNull, "test2")
+  def zioBlocksAbsent: A = A.b_c_d_e_s.set(aWithCNull, "test2")
 }
 
 object Domain {
