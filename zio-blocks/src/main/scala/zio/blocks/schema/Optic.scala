@@ -123,27 +123,31 @@ object Lens {
 
     def focus: Reflect[F, A] = child.value
 
-    private val register: Register[A] =
+    private[this] val binding = parent.recordBinding
+    private[this] val register =
       parent.registers(parent.fields.indexWhere(_.name == child.name)).asInstanceOf[Register[A]]
 
     def get(s: S)(implicit F: HasBinding[F]): A = {
       val registers = Registers()
-      F.deconstructor(parent.recordBinding).deconstruct(registers, RegisterOffset.Zero, s)
-      register.get(registers, RegisterOffset.Zero)
+      val offset = RegisterOffset.Zero
+      F.deconstructor(binding).deconstruct(registers, offset, s)
+      register.get(registers, offset)
     }
 
     def set(s: S, a: A)(implicit F: HasBinding[F]): S = {
       val registers = Registers()
-      F.deconstructor(parent.recordBinding).deconstruct(registers, RegisterOffset.Zero, s)
-      register.set(registers, RegisterOffset.Zero, a)
-      F.constructor(parent.recordBinding).construct(registers, RegisterOffset.Zero)
+      val offset = RegisterOffset.Zero
+      F.deconstructor(binding).deconstruct(registers, offset, s)
+      register.set(registers, offset, a)
+      F.constructor(binding).construct(registers, offset)
     }
 
     def modify(s: S, f: A => A)(implicit F: HasBinding[F]): S = {
       val registers = Registers()
-      F.deconstructor(parent.recordBinding).deconstruct(registers, RegisterOffset.Zero, s)
-      register.set(registers, RegisterOffset.Zero, f(register.get(registers, RegisterOffset.Zero)))
-      F.constructor(parent.recordBinding).construct(registers, RegisterOffset.Zero)
+      val offset = RegisterOffset.Zero
+      F.deconstructor(binding).deconstruct(registers, offset, s)
+      register.set(registers, offset, f(register.get(registers, offset)))
+      F.constructor(binding).construct(registers, offset)
     }
 
     override def refineBinding[G[_, _]](f: RefineBinding[F, G]): Lens[G, S, A] =
