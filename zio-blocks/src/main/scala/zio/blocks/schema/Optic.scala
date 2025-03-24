@@ -219,22 +219,15 @@ object Prism {
       with Leaf[F, S, A] {
     require((parent ne null) && (child ne null))
 
-    private var matcher: Matcher[A] = null
-
-    private def init(F: HasBinding[F]): Unit =
-      if (matcher eq null) {
-        val matchers = F.matchers(parent.variantBinding)
-        matcher = matchers(parent.cases.indexWhere(_.name == child.name)).asInstanceOf[Matcher[A]]
-      }
+    private[this] val binding = parent.variantBinding
+    private[this] val parentCase = parent.cases.indexWhere(_.name == child.name)
 
     def structure: Reflect[F, S] = parent
 
     def focus: Reflect[F, A] = child.value
 
-    def getOption(s: S)(implicit F: HasBinding[F]): Option[A] = {
-      init(F)
-      matcher.downcastOption(s)
-    }
+    def getOption(s: S)(implicit F: HasBinding[F]): Option[A] =
+      F.matchers(binding).apply(parentCase).asInstanceOf[Matcher[A]].downcastOption(s)
 
     def reverseGet(a: A): S = a
 
