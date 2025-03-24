@@ -129,14 +129,14 @@ object Lens {
 
     def get(s: S)(implicit F: HasBinding[F]): A = {
       val registers = Registers()
-      val offset = RegisterOffset.Zero
+      val offset    = RegisterOffset.Zero
       F.deconstructor(binding).deconstruct(registers, offset, s)
       register.get(registers, offset)
     }
 
     def set(s: S, a: A)(implicit F: HasBinding[F]): S = {
       val registers = Registers()
-      val offset = RegisterOffset.Zero
+      val offset    = RegisterOffset.Zero
       F.deconstructor(binding).deconstruct(registers, offset, s)
       register.set(registers, offset, a)
       F.constructor(binding).construct(registers, offset)
@@ -144,7 +144,7 @@ object Lens {
 
     def modify(s: S, f: A => A)(implicit F: HasBinding[F]): S = {
       val registers = Registers()
-      val offset = RegisterOffset.Zero
+      val offset    = RegisterOffset.Zero
       F.deconstructor(binding).deconstruct(registers, offset, s)
       register.set(registers, offset, f(register.get(registers, offset)))
       F.constructor(binding).construct(registers, offset)
@@ -219,7 +219,7 @@ object Prism {
       with Leaf[F, S, A] {
     require((parent ne null) && (child ne null))
 
-    private[this] val binding = parent.variantBinding
+    private[this] val binding    = parent.variantBinding
     private[this] val parentCase = parent.cases.indexWhere(_.name == child.name)
 
     def structure: Reflect[F, S] = parent
